@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phi Tiêu Điện Thoại</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0e0b12;color:#f4ece0;font-family:system-ui,"Segoe UI",Roboto,sans-serif;height:100vh;overflow:hidden;display:flex}
+#stage{flex:1;position:relative;min-width:0}
+canvas{width:100%;height:100%;display:block}
+aside{width:310px;background:#17121d;border-left:1px solid #2c2236;padding:16px;display:flex;flex-direction:column;gap:12px}
+h1{font-size:20px;color:#ffb347;letter-spacing:.5px}
+#hud{font-size:15px;color:#cbbfd8;min-height:40px}
+#hud b{color:#fff}
+#board{display:flex;flex-direction:column;gap:6px;flex:1;overflow:auto}
+.row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:#201829;border:2px solid transparent}
+.row.cur{border-color:#ffb347;background:#2b2034}
+.row.off{opacity:.4}
+.dot{width:12px;height:12px;border-radius:50%;flex:none}
+.nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc{font-weight:700;font-size:18px}
+.rs{font-size:11px;color:#9a8aa8}
+#qrbox{background:#fff;padding:8px;border-radius:10px;align-self:center}
+#code{text-align:center;font-size:12px;color:#9a8aa8}
+button{font:inherit;cursor:pointer;border:0;border-radius:10px;padding:10px 16px;background:#ffb347;color:#241a05;font-weight:700}
+button.sec{background:#2c2236;color:#f4ece0}
+button.on{background:#7bd88f;color:#06240f}
+#ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,7,14,.78);backdrop-filter:blur(3px)}
+#ov.hide{display:none}
+.card{background:#1c1524;border:1px solid #38294a;border-radius:18px;padding:28px 36px;text-align:center;max-width:560px;width:90%}
+.card h2{font-size:30px;margin-bottom:6px;color:#ffb347}
+.card p{color:#cbbfd8;margin:6px 0}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:14px 0;min-height:34px}
+.chip{padding:6px 14px;border-radius:999px;font-weight:600;color:#111}
+.btns{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+.rank{display:flex;justify-content:space-between;padding:8px 14px;border-radius:10px;background:#251b30;margin:6px 0;font-size:18px}
+.rank.w{background:#4a3410;border:1px solid #ffb347}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="ov"></div>
+</div>
+<aside>
+  <h1>🎯 Phi Tiêu Điện Thoại</h1>
+  <div id="hud">Đang tạo phòng…</div>
+  <div id="board"></div>
+  <div id="qrbox"></div>
+  <div id="code"></div>
+  <button class="sec" id="mouseBtn">Thử bằng chuột</button>
+</aside>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+/* ===== Config ===== */
+const ORDER=[20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+const COLORS=['#ff5c5c','#4cc9f0','#ffd166','#7bd88f','#c77dff','#ff9f45'];
+const MAXP=6, ROUNDS=3, DARTS=3, SWEET=24, FLIGHT=480;
+const DIFF={easy:{drop:.5,noise:.02,n:'Dễ'},normal:{drop:1,noise:.05,n:'Thường'},hard:{drop:1.6,noise:.09,n:'Khó'}};
+const RING={bull:.037,outer:.094,t0:.582,t1:.629,d0:.953};
+
+/* ===== State ===== */
+let players=[],phase='lobby',turn=0,round=1,dartsLeft=DARTS,busy=false;
+let stuck=[],flying=null,pops=[],room='',peer=null,diff='normal',ca={x:0,y:0};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const gauss=()=>(Math.random()+Math.random()+Math.random()-1.5)/1.5;
+const cv=$('#cv'),ctx=cv.getContext('2d');
+let W=0,H=0,cx=0,cy=0,R=0;
+
+function resize(){
+  const r=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;
+  cv.width=r.width*d;cv.height=r.height*d;ctx.setTransform(d,0,0,d,0,0);
+  W=r.width;H=r.height;cx=W/2;cy=H/2+12;R=Math.min(W,H)*0.38;
+}
+addEventListener('resize',resize);
+
+/* ===== Scoring ===== */
+function scoreAt(x,y){
+  const r=Math.hypot(x,y);
+  if(r>1)return{pts:0,label:'Trượt'};
+  if(r<=RING.bull)return{pts:50,label:'BULL'};
+  if(r<=RING.outer)return{pts:25,label:'25'};
+  let deg=Math.atan2(x,-y)*180/Math.PI;deg=(deg+360)%360;
+  const s=ORDER[Math.floor(((deg+9)%360)/18)];
+  if(r>=RING.d0)return{pts:s*2,label:'D'+s};
+  if(r>=RING.t0&&r<=RING.t1)return{pts:s*3,label:'T'+s};
+  return{pts:s,label:''};
+}
+
+/* ===== Peer / lobby ===== */
+function genCode(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<4;i++)s+=c[Math.floor(Math.random()*c.length)];return s}
+function mkQR(el,size,text){el.innerHTML='';new QRCode(el,{text,width:size,height:size,correctLevel:QRCode.CorrectLevel.L})}
+function joinURL(){return new URL('play.html?r='+room,location.href).href}
+function initPeer(){
+  room=genCode();
+  peer=new Peer('phitieu-'+room);
+  peer.on('open',()=>{
+    $('#hud').textContent='Phòng sẵn sàng';
+    $('#code').textContent='Mã phòng: '+room;
+    mkQR($('#qrbox'),170,joinURL());
+    renderAll();
+  });
+  peer.on('error',e=>{
+    if(e.type==='unavailable-id'){try{peer.destroy()}catch(_){};initPeer();}
+    else $('#hud').textContent='Lỗi kết nối: '+e.type;
+  });
+  peer.on('connection',conn=>{
+    conn.on('data',m=>onMsg(conn,m));
+    conn.on('close',()=>onDrop(conn));
+    conn.on('error',()=>onDrop(conn));
+  });
+}
+function send(p,m){try{if(p&&p.conn&&p.conn.open)p.conn.send(m)}catch(_){}}
+function newPlayer(name,local){
+  const used=players.map(p=>p.color);
+  const color=COLORS.find(c=>!used.includes(c))||COLORS[players.length%COLORS.length];
+  return{name,color,conn:null,connected:true,local:!!local,score:0,rs:[],aim:{x:0,y:0}};
+}
+function onMsg(conn,m){
+  if(!m||typeof m!=='object')return;
+  if(m.t==='hello'){
+    const name=String(m.name||'Người chơi').slice(0,12);
+    let p=players.find(x=>!x.connected&&!x.local&&x.name===name);
+    if(!p){
+      if(players.filter(x=>!x.local).length+players.filter(x=>x.local).length>=MAXP){try{conn.send({t:'full'})}catch(_){};return}
+      p=newPlayer(name);players.push(p);
+    }
+    p.conn=conn;p.connected=true;conn.player=p;
+    send(p,{t:'welcome',color:p.color});
+    broadcast();renderAll();
+  }else if(conn.player){
+    const p=conn.player;
+    if(m.t==='aim'&&isFinite(m.x)&&isFinite(m.y)){p.aim.x=clamp(m.x,-2,2);p.aim.y=clamp(m.y,-2,2)}
+    else if(m.t==='throw'&&isFinite(m.x)&&isFinite(m.y)&&isFinite(m.p))doThrow(p,{x:clamp(m.x,-2,2),y:clamp(m.y,-2,2),p:clamp(m.p,0,60)});
+  }
+}
+function onDrop(conn){
+  const p=conn.player;if(!p||p.conn!==conn)return;
+  p.connected=false;
+  if(phase==='playing'&&players[turn]===p&&!busy){dartsLeft=0;setTimeout(nextTurn,400)}
+  if(phase==='playing'&&!players.some(x=>x.connected)){phase='lobby'}
+  renderAll();
+}
+function broadcast(){
+  const cur=players[turn];
+  for(const p of players)send(p,{t:'state',phase,round,rounds:ROUNDS,
+    myTurn:phase==='playing'&&cur===p&&dartsLeft>0,dartsLeft,cur:cur?cur.name:'',score:p.score});
+}
+
+/* ===== Game flow ===== */
+function startGame(){
+  if(!players.some(p=>p.connected))return;
+  try{ac=ac||new AudioContext();ac.resume()}catch(_){}
+  players.forEach(p=>{p.score=0;p.rs=[]});
+  phase='playing';round=1;dartsLeft=DARTS;stuck=[];busy=false;
+  turn=players.findIndex(p=>p.connected);
+  broadcast();renderAll();
+}
+function nextTurn(){
+  if(phase!=='playing')return;
+  stuck=[];dartsLeft=DARTS;
+  let tries=0;
+  do{turn++;if(turn>=players.length){turn=0;round++}tries++}
+  while(tries<=players.length&&round<=ROUNDS&&!players[turn].connected);
+  if(round>ROUNDS){phase='results';broadcast();renderAll();return}
+  if(!players[turn].connected){phase='lobby'}
+  broadcast();renderAll();
+}
+function doThrow(p,m){
+  if(phase!=='playing'||players[turn]!==p||busy||dartsLeft<=0)return;
+  busy=true;const D=DIFF[diff];
+  const tx=m.x+gauss()*D.noise;
+  const ty=m.y+clamp((SWEET-m.p)/SWEET,-.35,.9)*.45*D.drop+gauss()*D.noise;
+  flying={sx:cx+(Math.random()-.5)*80,sy:H+50,tx,ty,t0:performance.now(),color:p.color};
+  sfx('whoosh');
+  setTimeout(()=>land(p,tx,ty),FLIGHT);
+}
+function land(p,tx,ty){
+  flying=null;
+  if(phase!=='playing'){busy=false;return}
+  const s=scoreAt(tx,ty);
+  stuck.push({x:tx,y:ty,color:p.color});
+  p.score+=s.pts;p.rs[round-1]=(p.rs[round-1]||0)+s.pts;
+  dartsLeft--;
+  const txt=s.pts?(s.label?s.label+' · '+s.pts:''+s.pts):'Trượt';
+  pops.push({txt,x:tx,y:ty,t0:performance.now(),color:s.pts>=40?'#ffd166':'#fff'});
+  sfx(s.pts>=40?'big':'thud');
+  send(p,{t:'hit',label:s.label,pts:s.pts});
+  busy=false;broadcast();renderAll();
+  if(dartsLeft<=0||!p.connected)setTimeout(nextTurn,1600);
+}
+
+/* ===== Sound ===== */
+let ac=null;
+function sfx(k){
+  try{
+    ac=ac||new AudioContext();
+    const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime;
+    o.connect(g);g.connect(ac.destination);
+    const f={big:[880,1320,.2],thud:[150,55,.18],whoosh:[300,900,.35]}[k];
+    o.type=k==='whoosh'?'sawtooth':'sine';
+    o.frequency.setValueAtTime(f[0],t);o.frequency.exponentialRampToValueAtTime(f[1],t+f[2]*.7);
+    g.gain.setValueAtTime(k==='whoosh'?.05:.25,t);g.gain.exponentialRampToValueAtTime(.001,t+f[2]);
+    o.start(t);o.stop(t+f[2]+.02);
+  }catch(_){}
+}
+
+/* ===== Mouse test mode ===== */
+let mouseP=null;
+$('#mouseBtn').onclick=()=>{
+  if(mouseP){players=players.filter(p=>p!==mouseP);mouseP=null;$('#mouseBtn').classList.remove('on');$('#mouseBtn').textContent='Thử bằng chuột'}
+  else{mouseP=newPlayer('Chuột',true);players.push(mouseP);$('#mouseBtn').classList.add('on');$('#mouseBtn').textContent='Tắt chế độ chuột'}
+  renderAll();
+};
+cv.addEventListener('mousemove',e=>{
+  if(!mouseP)return;const r=cv.getBoundingClientRect();
+  mouseP.aim.x=(e.clientX-r.left-cx)/R;mouseP.aim.y=(e.clientY-r.top-cy)/R;
+});
+cv.addEventListener('click',()=>{if(mouseP)doThrow(mouseP,{x:mouseP.aim.x,y:mouseP.aim.y,p:SWEET})});
+
+/* ===== UI ===== */
+function renderAll(){renderOv();renderSide()}
+function renderSide(){
+  const cur=players[turn];
+  $('#hud').innerHTML=phase==='playing'&&cur
+    ?`Lượt <b>${round}/${ROUNDS}</b> · <b style="color:${cur.color}">${esc(cur.name)}</b> · còn <b>${dartsLeft}</b> phi tiêu`
+    :phase==='results'?'Kết thúc!':'Chờ người chơi…';
+  $('#board').innerHTML=players.map((p,i)=>`<div class="row ${phase==='playing'&&i===turn?'cur':''} ${p.connected?'':'off'}">
+    <span class="dot" style="background:${p.color}"></span><span class="nm">${esc(p.name)}</span>
+    <span class="rs">${p.rs.map(v=>v||0).join(' · ')}</span><span class="sc">${p.score}</span></div>`).join('');
+}
+function renderOv(){
+  const ov=$('#ov');
+  if(phase==='playing'){ov.classList.add('hide');return}
+  ov.classList.remove('hide');
+  const chips=players.map(p=>`<span class="chip" style="background:${p.color};${p.connected?'':'opacity:.4'}">${esc(p.name)}</span>`).join('')||'<span style="color:#9a8aa8">Chưa có ai — quét QR để vào</span>';
+  if(phase==='lobby'){
+    ov.innerHTML=`<div class="card"><h2>🎯 Phi Tiêu Điện Thoại</h2>
+      <p>Quét QR bên phải bằng điện thoại · Mã phòng <b>${room||'…'}</b></p>
+      <p style="font-size:13px">Cầm điện thoại như remote TV, hướng vào màn hình, bấm <b>Căn giữa</b>, rồi vung tay để ném.</p>
+      <div class="chips">${chips}</div>
+      <div class="btns">${Object.keys(DIFF).map(k=>`<button class="${diff===k?'on':'sec'}" data-d="${k}">${DIFF[k].n}</button>`).join('')}</div>
+      <div class="btns"><button id="startBtn" ${players.some(p=>p.connected)?'':'disabled style="opacity:.4"'}>Bắt đầu ▶</button></div></div>`;
+    ov.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{diff=b.dataset.d;renderOv()});
+    const sb=$('#startBtn');if(sb)sb.onclick=startGame;
+  }else if(phase==='results'){
+    const rank=[...players].sort((a,b)=>b.score-a.score),top=rank[0]?rank[0].score:0;
+    ov.innerHTML=`<div class="card"><h2>🏆 Kết quả</h2>
+      ${rank.map((p,i)=>`<div class="rank ${p.score===top?'w':''}"><span><span class="dot" style="display:inline-block;background:${p.color};margin-right:8px"></span>${i+1}. ${esc(p.name)}</span><b>${p.score}</b></div>`).join('')}
+      <div class="btns"><button id="againBtn">Chơi lại ↻</button></div></div>`;
+    $('#againBtn').onclick=startGame;
+    players.forEach(p=>send(p,{t:'state',phase,round,rounds:ROUNDS,myTurn:false,dartsLeft:0,cur:'',score:p.score,win:p.score===top}));
+  }
+}
+addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&phase!=='playing'){e.preventDefault();startGame()}});
+
+/* ===== Drawing ===== */
+function seg(r0,r1,a0,a1,col){
+  ctx.beginPath();ctx.arc(cx,cy,r1*R,a0,a1);ctx.arc(cx,cy,r0*R,a1,a0,true);ctx.closePath();ctx.fillStyle=col;ctx.fill();
+}
+function drawBoard(){
+  // wall light
+  const g=ctx.createRadialGradient(cx,cy,R*.3,cx,cy,R*2.2);g.addColorStop(0,'#2a2030');g.addColorStop(1,'#0e0b12');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.beginPath();ctx.arc(cx,cy,R*1.2,0,7);ctx.fillStyle='#14110f';ctx.fill();
+  for(let i=0;i<20;i++){
+    const a=(-90+i*18)*Math.PI/180,a0=a-9*Math.PI/180,a1=a+9*Math.PI/180;
+    const dark=i%2===0,single=dark?'#16130f':'#f0dfb8',ring=dark?'#c8312b':'#1f8a4c';
+    seg(RING.outer,RING.t0,a0,a1,single);seg(RING.t0,RING.t1,a0,a1,ring);
+    seg(RING.t1,RING.d0,a0,a1,single);seg(RING.d0,1,a0,a1,ring);
+    ctx.fillStyle='#f0dfb8';ctx.font=`bold ${R*.085}px system-ui`;ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(ORDER[i],cx+Math.cos(a)*R*1.11,cy+Math.sin(a)*R*1.11);
+  }
+  ctx.beginPath();ctx.arc(cx,cy,RING.outer*R,0,7);ctx.fillStyle='#1f8a4c';ctx.fill();
+  ctx.beginPath();ctx.arc(cx,cy,RING.bull*R,0,7);ctx.fillStyle='#c8312b';ctx.fill();
+  // wires
+  ctx.strokeStyle='rgba(200,200,200,.35)';ctx.lineWidth=1;
+  for(const r of [RING.outer,RING.t0,RING.t1,RING.d0,1]){ctx.beginPath();ctx.arc(cx,cy,r*R,0,7);ctx.stroke()}
+  for(let i=0;i<20;i++){const a=(-81+i*18)*Math.PI/180;ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*RING.outer*R,cy+Math.sin(a)*RING.outer*R);ctx.lineTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R);ctx.stroke()}
+}
+function drawDart(px,py,color,s){
+  ctx.save();ctx.translate(px,py);ctx.scale(s,s);
+  ctx.strokeStyle='#ddd';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(7,13);ctx.stroke();
+  ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(7,13);ctx.lineTo(2,25);ctx.lineTo(16,22);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,0,2.2,0,7);ctx.fill();
+  ctx.restore();
+}
+function frame(now){
+  requestAnimationFrame(frame);
+  if(!W)return;
+  drawBoard();
+  for(const d of stuck)drawDart(cx+d.x*R,cy+d.y*R,d.color,1);
+  const cur=players[turn];
+  if(phase==='playing'&&cur&&!busy&&dartsLeft>0){
+    ca.x+=(cur.aim.x-ca.x)*.35;ca.y+=(cur.aim.y-ca.y)*.35;
+    const px=cx+ca.x*R,py=cy+ca.y*R;
+    ctx.strokeStyle=cur.color;ctx.lineWidth=3;ctx.beginPath();ctx.arc(px,py,16,0,7);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(px-26,py);ctx.lineTo(px-8,py);ctx.moveTo(px+8,py);ctx.lineTo(px+26,py);ctx.moveTo(px,py-26);ctx.lineTo(px,py-8);ctx.moveTo(px,py+8);ctx.lineTo(px,py+26);ctx.stroke();
+  }
+  if(flying){
+    const p=clamp((now-flying.t0)/FLIGHT,0,1),e=1-Math.pow(1-p,2);
+    const tx=cx+flying.tx*R,ty=cy+flying.ty*R;
+    const x=flying.sx+(tx-flying.sx)*e,y=flying.sy+(ty-flying.sy)*e-Math.sin(p*Math.PI)*R*.25;
+    drawDart(x,y,flying.color,1.9-.9*e);
+  }
+  pops=pops.filter(p=>now-p.t0<1400);
+  for(const p of pops){
+    const a=(now-p.t0)/1400;ctx.globalAlpha=1-a*a;ctx.fillStyle=p.color;
+    ctx.font=`bold ${R*.14}px system-ui`;ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.strokeStyle='#000';ctx.lineWidth=5;
+    const x=cx+p.x*R,y=cy+p.y*R-30-a*50;ctx.strokeText(p.txt,x,y);ctx.fillText(p.txt,x,y);ctx.globalAlpha=1;
+  }
+}
+
+resize();initPeer();requestAnimationFrame(frame);renderAll();
+new ResizeObserver(resize).observe(cv);
+</script>
+</body>
+</html>

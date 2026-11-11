@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Phi Tiêu — Tay ném</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:#0e0b12;color:#f4ece0;font-family:system-ui,Roboto,sans-serif;overflow:hidden;touch-action:none;user-select:none}
+body{display:flex;flex-direction:column;border:6px solid #2c2236;transition:border-color .2s}
+body.turn{border-color:var(--c,#ffb347)}
+section{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center}
+section.on{display:flex}
+h1{font-size:26px;color:#ffb347}
+p{color:#cbbfd8;line-height:1.45}
+input{font:inherit;font-size:20px;padding:12px 16px;border-radius:12px;border:2px solid #38294a;background:#1c1524;color:#fff;width:100%;max-width:300px;text-align:center}
+button{font:inherit;font-size:18px;font-weight:700;border:0;border-radius:14px;padding:14px 26px;background:#ffb347;color:#241a05}
+button.sec{background:#2c2236;color:#f4ece0;font-size:15px;padding:10px 18px}
+#big{font-size:34px;font-weight:800}
+#sub{font-size:17px}
+#pad{flex:1;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border-radius:20px}
+.turn #pad{animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{background:rgba(255,179,71,.04)}50%{background:rgba(255,179,71,.16)}}
+#darts{font-size:30px;letter-spacing:6px}
+#flash{position:fixed;inset:0;display:none;align-items:center;justify-content:center;font-size:64px;font-weight:900;background:rgba(0,0,0,.6);color:#ffd166;pointer-events:none}
+#score{font-size:15px;color:#9a8aa8}
+</style>
+</head>
+<body>
+<section id="s-join" class="on">
+  <h1>🎯 Phi Tiêu</h1>
+  <p id="jmsg">Nhập tên rồi vào phòng</p>
+  <input id="name" maxlength="12" placeholder="Tên của bạn" autocomplete="off">
+  <button id="joinBtn">Vào chơi</button>
+</section>
+<section id="s-game">
+  <div id="pad">
+    <div id="big">…</div>
+    <div id="sub"></div>
+    <div id="darts"></div>
+    <div id="score"></div>
+  </div>
+  <button class="sec" id="calBtn">⌖ Căn giữa (hướng vào bia)</button>
+</section>
+<div id="flash"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+/* ===== Tunables ===== */
+const RANGE=20;      // độ quay = 1 bán kính bia
+const TH=14;         // ngưỡng gia tốc bắt đầu ném (m/s²)
+const PEAK_MS=130;   // thời gian thu đỉnh
+const LOOKBACK=90;   // ms: lấy toạ độ ngắm trước khi vung
+const COOLDOWN=1500;
+
+const $=s=>document.querySelector(s);
+const code=(new URLSearchParams(location.search).get('r')||'').toUpperCase();
+let conn=null,st={phase:'lobby',myTurn:false,dartsLeft:0},cal=null,last=null;
+let hist=[],aim={x:0,y:0},lastSend=0,cooldown=0,thr=null,hasSensor=false,myName='';
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+$('#name').value=localStorage.getItem('pt_name')||'';
+if(!code)$('#jmsg').textContent='Thiếu mã phòng — hãy quét QR trên màn hình lớn.';
+
+$('#joinBtn').onclick=async()=>{
+  if(!code)return;
+  myName=($('#name').value.trim()||'Người chơi').slice(0,12);
+  localStorage.setItem('pt_name',myName);
+  try{
+    const reqs=[];
+    if(window.DeviceMotionEvent&&DeviceMotionEvent.requestPermission)reqs.push(DeviceMotionEvent.requestPermission());
+    if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission)reqs.push(DeviceOrientationEvent.requestPermission());
+    if(reqs.length)await Promise.all(reqs);
+  }catch(_){}
+  addEventListener('deviceorientation',onOri);
+  addEventListener('devicemotion',onMotion);
+  try{navigator.wakeLock&&navigator.wakeLock.request('screen')}catch(_){}
+  $('#s-join').classList.remove('on');$('#s-game').classList.add('on');
+  setBig('Đang kết nối…','');
+  connect();
+};
+
+function connect(){
+  const peer=new Peer();
+  peer.on('open',()=>{
+    conn=peer.connect('phitieu-'+code,{reliable:true});
+    conn.on('open',()=>{conn.send({t:'hello',name:myName});setBig('Đã vào phòng','Chờ chủ phòng bắt đầu');});
+    conn.on('data',onMsg);
+    conn.on('close',lost);conn.on('error',lost);
+  });
+  peer.on('error',e=>{setBig('Không vào được phòng','Kiểm tra mã phòng ('+e.type+')');addRetry()});
+}
+function lost(){setBig('Mất kết nối','');addRetry()}
+function addRetry(){
+  if($('#retry'))return;
+  const b=document.createElement('button');b.id='retry';b.textContent='Thử lại';b.onclick=()=>location.reload();$('#pad').appendChild(b);
+}
+
+function onMsg(m){
+  if(!m)return;
+  if(m.t==='welcome'){document.body.style.setProperty('--c',m.color);$('#big').style.color=m.color}
+  else if(m.t==='full')setBig('Phòng đã đầy','');
+  else if(m.t==='state'){st=m;render()}
+  else if(m.t==='hit'){
+    if(navigator.vibrate)navigator.vibrate(m.pts>=40?[60,40,60]:40);
+    flash(m.pts?(m.label?m.label+' · '+m.pts:m.pts):'Trượt');
+  }
+}
+function setBig(a,b){$('#big').textContent=a;$('#sub').textContent=b}
+function render(){
+  document.body.classList.toggle('turn',!!st.myTurn);
+  $('#darts').textContent=st.myTurn?'🎯'.repeat(st.dartsLeft):'';
+  $('#score').textContent=st.phase==='lobby'?'':'Điểm của bạn: '+st.score;
+  if(st.phase==='lobby')setBig('Đã vào phòng','Chờ chủ phòng bắt đầu');
+  else if(st.phase==='results')setBig(st.win?'🏆 Bạn thắng!':'Hết trận','Xem kết quả trên màn hình lớn');
+  else if(st.myTurn)setBig('ĐẾN LƯỢT BẠN',hasSensor?'Ngắm vào bia rồi vung tay ném!':'Vuốt lên màn hình để ném');
+  else setBig('Chờ lượt…',(st.cur?st.cur+' đang ném · ':'')+'Lượt '+st.round+'/'+st.rounds);
+}
+function flash(t){const f=$('#flash');f.textContent=t;f.style.display='flex';setTimeout(()=>f.style.display='none',1000)}
+
+/* ===== Sensors ===== */
+$('#calBtn').onclick=()=>{if(last){cal={a:last.alpha,b:last.beta};hist=[];if(navigator.vibrate)navigator.vibrate(20)}};
+function onOri(e){
+  if(e.alpha==null||e.beta==null)return;
+  hasSensor=true;last={alpha:e.alpha,beta:e.beta};
+  if(!cal)cal={a:e.alpha,b:e.beta};
+  const dA=((e.alpha-cal.a+540)%360)-180,dB=e.beta-cal.b;
+  const target={x:clamp(-dA/RANGE,-2,2),y:clamp(-dB/RANGE,-2,2)};
+  aim.x+=(target.x-aim.x)*.6;aim.y+=(target.y-aim.y)*.6;
+  const now=performance.now();
+  hist.push({t:now,x:aim.x,y:aim.y});
+  while(hist.length&&now-hist[0].t>600)hist.shift();
+  if(now-lastSend>50&&conn&&conn.open){lastSend=now;conn.send({t:'aim',x:aim.x,y:aim.y})}
+}
+function aimAt(t){
+  for(let i=hist.length-1;i>=0;i--)if(hist[i].t<=t)return hist[i];
+  return hist[0]||aim;
+}
+function onMotion(e){
+  if(!st.myTurn||st.dartsLeft<=0)return;
+  const now=performance.now();
+  if(now<cooldown)return;
+  let mag=0;
+  const a=e.acceleration;
+  if(a&&a.x!=null)mag=Math.hypot(a.x,a.y,a.z);
+  else if(e.accelerationIncludingGravity){const g=e.accelerationIncludingGravity;mag=Math.abs(Math.hypot(g.x||0,g.y||0,g.z||0)-9.81)}
+  if(!thr){
+    if(mag>TH){const s=aimAt(now-LOOKBACK);thr={t0:now,peak:mag,x:s.x,y:s.y}}
+  }else{
+    thr.peak=Math.max(thr.peak,mag);
+    if(now-thr.t0>PEAK_MS){fire(thr.x,thr.y,thr.peak);thr=null}
+  }
+}
+function fire(x,y,p){
+  cooldown=performance.now()+COOLDOWN;
+  if(navigator.vibrate)navigator.vibrate(25);
+  if(conn&&conn.open)conn.send({t:'throw',x,y,p});
+}
+
+/* ===== Swipe fallback ===== */
+let ts=null;
+$('#pad').addEventListener('touchstart',e=>{const t=e.changedTouches[0];ts={y:t.clientY,t:performance.now()}},{passive:true});
+$('#pad').addEventListener('touchend',e=>{
+  if(!ts||!st.myTurn||performance.now()<cooldown)return;
+  const t=e.changedTouches[0],dy=ts.y-t.clientY,dt=Math.max(30,performance.now()-ts.t);
+  ts=null;
+  if(dy>80&&dt<500){
+    const speed=dy/dt;
+    const s=hasSensor?aimAt(performance.now()-LOOKBACK):aim;
+    fire(s.x,s.y,clamp(10+speed*10,10,38));
+  }
+},{passive:true});
+</script>
+</body>
+</html>
