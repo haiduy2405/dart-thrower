@@ -17,10 +17,21 @@ git push -u origin main
 Repo → Settings → Pages → Branch `main` / root. URL: `https://haiduy2405.github.io/dart-thrower/`
 
 ## Điều khiển trên điện thoại
-- **Chủ phòng** = người vào đầu tiên (nếu họ thoát, người kế tiếp được chuyển quyền). Chủ phòng chọn **Chế độ** (Cổ điển / 301), **Số lượt**, **Độ khó**, **Phòng** (Quán Bar / Xưởng Gỗ / Đêm Muộn), rồi bấm **Bắt đầu**. Màn hình lớn hiện đúng lựa chọn đó theo thời gian thực.
+- Vào phòng là điện thoại **tự chuyển toàn màn hình** như một ứng dụng (Android/Chrome). Không bôi đen chữ, không menu giữ lâu, không phóng to khi chạm đúp. iPhone không cho web tự toàn màn hình: bấm Chia sẻ → **Thêm vào Màn hình chính**, rồi mở từ biểu tượng.
+- Khi vào phòng, **tâm mang tên bạn** hiện trên màn hình lớn và chạy theo hướng điện thoại. Lệch thì bấm **Căn giữa**.
+- **Chủ phòng** = người vào đầu tiên (thoát thì quyền chuyển cho người kế tiếp). Chủ phòng chọn chế độ, số lượt, độ khó, phòng rồi bấm **Bắt đầu**. Màn hình lớn hiện đúng lựa chọn, kèm luật chơi.
 - Trong trận, chủ phòng có **Menu**: Tạm dừng / Tiếp tục, Chơi lại, Về sảnh.
-- Hết trận: chủ phòng chọn **Chơi lại** hoặc **Về sảnh để đổi chế độ**. Người khác chỉ thấy bảng xếp hạng.
-- 301: bắt đầu 301 điểm, trừ dần về đúng 0 để thắng. Vượt quá 0 thì mất điểm của lượt đó (Quá điểm). Tối đa 10 lượt, hết lượt ai còn ít điểm nhất thắng.
+- Khi chưa đến lượt, ai cũng có 4 nút **cổ vũ** (Cố lên! / Hụt rồi! / Ngon! / Hú hú!). Chữ bay lên từ tâm của người gửi trên màn hình lớn.
+- Hết trận có thưởng vui: Tay run nhất, Thợ săn tâm, Cú ném đỉnh nhất.
+
+## Chế độ chơi
+| Chế độ | Luật |
+|---|---|
+| Cổ điển | Cộng điểm từng phi tiêu, 3/5/8 lượt, nhiều nhất thắng |
+| Số May Mắn | Mỗi vòng một số được tô sáng. Trúng số mới có điểm (đơn ×10, kép ×20, ba ×30), trúng tâm +25 |
+| Quanh Bia | Ném lần lượt 1 → 20 rồi tâm. Ném kép nhảy 2 số, ném ba nhảy 3 số. Ai xong trước thắng (tối đa 10 lượt) |
+| Sinh Tồn | 3 mạng. Mỗi lượt phải ≥ điểm người ném trước, thấp hơn mất 1 mạng. Cần ≥ 2 người, người cuối cùng còn sống thắng |
+| 301 | Trừ dần từ 301 về đúng 0. Vượt quá thì mất điểm của lượt đó (tối đa 10 lượt) |
 
 ## Cách chơi
 1. Điện thoại: nhập tên → **Vào chơi** (iOS sẽ hỏi quyền cảm biến → Cho phép).
